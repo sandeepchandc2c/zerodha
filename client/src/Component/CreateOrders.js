@@ -2,9 +2,11 @@
 import {useState, useEffect} from "react"
 
 import axios from "axios"
+import {useParams} from "react-router-dom"
 function CreateOrders() {
   const [data, setdata] = useState([])
   const [symbolsdata, setSymbol]  = useState([])
+  const param = useParams()
   const [formData, setFormData] = useState({
     symbol: "",
     price: "",
@@ -13,8 +15,9 @@ function CreateOrders() {
 
   })
   async function getdata()
-  {
-    const data = await axios.get("http://localhost:3001/position")
+  { 
+    const {id} = param
+    const data = await axios.get("http://localhost:3001/position/"+id)
     setdata(data.data.data.data.net)
   }
   async function getSymbol(){
@@ -23,13 +26,15 @@ function CreateOrders() {
     setSymbol(data.data.data)
   }
   useEffect(()=>{
+
     getdata()
-    getSymbol()
+    // getSymbol()
     setInterval(()=>{
-      
+  
     getdata()
     }, 10000)
   },[])
+ 
    const onChange = (e) =>{
      
     setFormData({ ...formData, [e.target.name]: e.target.value })
@@ -42,8 +47,9 @@ function CreateOrders() {
      {
       let prev = data.find(item=> item.tradingsymbol == formData.symbol)
       try{
+        const {id} = param
         await axios({
-          url: "http://localhost:3001/data",
+          url: "http://localhost:3001/data/"+id,
           method: "post",
           data: {
             formData,

@@ -14,11 +14,40 @@ const mongoose = require("mongoose")
 const User = require("./schema/user")
 const cors = require("cors")
 const moment = require("moment")
+const xlsx = require('node-xlsx');
+const download = require('download');
 moment().format(); 
 app.use(cors())
-
+const  user = {
+	status: 'success',
+	data: {
+	  user_type: 'individual',
+	  email: 'parit@concepttocode.in',
+	  user_name: 'Parit Verma',
+	  user_shortname: 'Parit',
+	  broker: 'ZERODHA',
+	  exchanges: [
+		'BFO', 'CDS',
+		'MCX', 'BSE',
+		'NFO', 'BCD',
+		'MF',  'NSE'
+	  ],
+	  products: [ 'CNC', 'NRML', 'MIS', 'BO', 'CO' ],
+	  order_types: [ 'MARKET', 'LIMIT', 'SL', 'SL-M' ],
+	  avatar_url: null,
+	  user_id: 'CM5442',
+	  api_key: '4w75m48lpohhspi1',
+	  access_token: 'dhiM2ZJP8NQbavW3iuFyzm2bzveeG3Ob',
+	  public_token: 'ey6qQsWd3VWYFLfz02qFWuo81AoYspBA',
+	  refresh_token: '',
+	  enctoken: 'N3t4gfBFy6v3kJ4N6GLrDKKR+EIGJMDV7y1AIqDGvW9Je7vuPesN+aRZBKpoO8xCQOhfTFHra2vU7Fa6npj5JaPnS8gIDhd0CI84FpgiInECdejapti2xldUr44u5Xg=',
+	  login_time: '2022-01-24 12:57:19',
+	  meta: { demat_consent: 'consent' }
+	}
+}
 ;(async()=>{
-	await mongoose.connect('mongodb://localhost/my_database');
+	try{
+		await mongoose.connect('mongodb://localhost/my_database');
 	console.log("connected")
 	const resp = await axios({
 		url:  "https://api.kite.trade/instruments",
@@ -29,12 +58,20 @@ app.use(cors())
 		}
 
 	})
+	// For lot
 	fs.writeFileSync(__dirname+"/abc.csv", Buffer.from(resp.data))
+	await download('https://www1.nseindia.com/content/fo/qtyfreeze.xls', __dirname);
+	
+	}
+	catch(e)
+	{
+		console.log("error",e)
+	}
 })()
 
 
 
-User.updateOne({}, {token:"n8LTDrB2K7EX60977mUKTHFyeNIAEern" }, {upsert: true})
+// User.updateOne({}, {token:"n8LTDrB2K7EX60977mUKTHFyeNIAEern" }, {upsert: true})
 app.get("/gettoken", async(req, res)=>{
     try{
 		console.log(req.query)
@@ -54,45 +91,103 @@ app.get("/gettoken", async(req, res)=>{
 			  },
 			data
 		})
-		console.log("data", resp)
+		const {user_name, email,access_token,api_key} = resp.data.data
+		await User.findOneAndUpdate({
+			email: email
+		}, {
+			token:  access_token ,
+			name: user_name,
+			email:email,
+			key: api_key
+		}, {upsert: true})
 		res.json("done")
 	}catch(e)
 	{
 		console.log("Error", e)
 	}
 })
-app.post("/data", async(req, res)=>{
-	try{
-		const {action, formData, other} = req.body
-		const {symbol, price, quantity} = formData
-		const jsonArray = await csv({ noheader: true, output: "csv" }).fromFile(
-			__dirname+"/abc.csv"
-		  );
-		let values = jsonArray.slice(1)
-		let lot 
-		for(let i =0; i < values.length; i++)
+app.post("/data/:id", async(req, res)=>{
+	try{ 
+		const {id} = req.params
+		const user = await User.findOne({email: id})
+		if(user)
 		{
-			if(values[i][2] == symbol)
+			const {action, formData, other} = req.body
+			const {symbol, price, quantity} = formData
+			const jsonArray = await csv({ noheader: true, output: "csv" }).fromFile(
+				__dirname+"/abc.csv"
+			  );
+			let values = jsonArray.slice(1)
+			
+			let lot 
+			let name
+			for(let i =0; i < values.length; i++)
 			{
-                lot = values[i][8]
-				break;
+				if(values[i][2] == symbol)
+				{
+					lot = values[i][8]
+					name = values[i][3]
+					break;
+				}
 			}
-		}
-		console.log(lot)
-		if(+quantity % lot == 0)
-			{
-				await getDetails({action,symbol,price,quantity, other}, res)
-			}
-		else{
+			const data = xlsx.parse(`${__dirname}/qtyfreeze.xls`);
+			let fvalues = data[0].data
+			let freeze
+			for(let i =0; i < fvalues.length; i++)
+			{    
+				if(fvalues[i][1].trim() == name )
+				{
+					freeze = fvalues[i][2]
+					break;
+				}	
 				
-			throw new Error(`Quantity should be multiple of ${lot}`)
+			}
+			if(+quantity % lot == 0)
+				{
+					if(+quantity < freeze)
+					{   
+						
+						await getDetails({action,symbol,price,quantity, other}, res, user)
+					}
+					else{
+						let order = quantity / freeze
+						let before = order.toString().split(".")[0]
+						let after = order.toString().split(".")[1]
+						let total = 0
+						if(before)
+						{
+						   for(let i = 0; i < before; i++)
+						   {   
+							   total += freeze
+							   await getDetails({action,symbol,price,quantity:freeze, other}, res, user)
+						   }
+						}
+						if(after)
+						{
+							let oth = quantity - total
+							await getDetails({action,symbol,price,quantity:oth , other}, res, user)
+						}
+						
+					}
+				}
+	
+			else{
+					
+				throw new Error(`Quantity should be multiple of ${lot}`)
+			}
+			res.status(200).json("done")
 		}
+		 else{
+			 throw new Error("User not Found")
+		 }
 	}catch(e)
 	{   
 		res.status(400).json({message: e.message})
 	}
 	
 })
+
+
 app.get("/orders", async(req, res)=>{
 	try{
 		const jsonArray = await csv({ noheader: true, output: "csv" }).fromFile(
@@ -128,7 +223,22 @@ app.get("/orders", async(req, res)=>{
 	}
 })
 
-
+app.post("/user", async(req, res)=>{
+	try{
+          const {email}= req.body
+		  let user = await User.findOne({email: email})
+		  if(user)
+		  {
+			  return res.status(200).json(user)
+		  }
+		  else{
+			  throw new Error("Invalid User")
+		  }
+	}catch(e)
+	{
+		res.status(400).json({message: e.message})
+	}
+})
 function mapdata(obj){
 	return {
 		'instrument_token': obj[0],
@@ -146,35 +256,12 @@ function mapdata(obj){
 	 }
 }
 
-let user = {
-    status: 'success',
-    data: {
-      user_type: 'individual',
-      email: 'parit@concepttocode.in',
-      user_name: 'Parit Verma',
-      user_shortname: 'Parit',
-      broker: 'ZERODHA',
-      exchanges: [Array],
-      products: [Array],
-      order_types: [Array],
-      avatar_url: null,
-      user_id: 'CM5442',
-      api_key: '4w75m48lpohhspi1',
-      access_token: '3jkcUBmZ1pp34GShJsq1C8GpgnHCOb5p',
-      public_token: 'U2bLEr4Mhw9IepiHLCwpiu7Jn3mycOQ4',
-      refresh_token: '',
-      enctoken: '3LgYdkXPSv/u9Avl5LZIdDxTUZYNdBPU2QZ2livgTht3OoQS9OW/EvEP13J1Zu6VeuZAoRibyBd/8eJc/7Z4ObIPFuMz/IxtVZPBLVFZi9xtE3pkyOO6ke6MqC6NBV8=',
-      login_time: '2022-01-21 17:43:43',
-      meta: [Object]
-    }
-  
-  }
 
 
 
-async function  getDetails(market, res)
+
+async function  getDetails(market, res, user)
 {   
-
   try{
 	    
 	  	  let url = "https://api.kite.trade/orders/amo"
@@ -194,7 +281,7 @@ async function  getDetails(market, res)
 				 method: "post",
 				 headers: {
 					 'X-Kite-Version': 3,
-					 "Authorization": `token ${key}:${user.data.access_token}`,
+					 "Authorization": `token ${user.key}:${user.token}`,
 					 'Content-Type': 'application/x-www-form-urlencoded'
 				 },
 				 data
@@ -219,7 +306,7 @@ async function  getDetails(market, res)
 					 method: "post",
 					 headers: {
 						 'X-Kite-Version': 3,
-						 "Authorization": `token ${key}:${user.data.access_token}`,
+						 "Authorization": `token ${user.key}:${user.token}`,
 						 'Content-Type': 'application/x-www-form-urlencoded'
 					 },
 					 data
@@ -242,16 +329,24 @@ async function  getDetails(market, res)
 
 
 
-app.get("/position", async(req, res)=>{
+app.get("/position/:id", async(req, res)=>{
 	try{
-     	const data = await axios("https://api.kite.trade/portfolio/positions", {
-			method: "get",
-			headers: {
-				'X-Kite-Version': 3,
-				"Authorization": `token ${user.data.api_key}:${user.data.access_token}`
-			}
-		})
-        return res.json({data: data.data})
+		const {id} = req.params
+		const user = await User.findOne({email: id})
+     	if(user)
+		 {
+			const data = await axios("https://api.kite.trade/portfolio/positions", {
+				method: "get",
+				headers: {
+					'X-Kite-Version': 3,
+					"Authorization": `token ${user.key}:${user.token}`
+				}
+			})
+			return res.json({data: data.data}) 
+		 }
+		 else{
+			throw new Error("User Not Found")
+		 }
 	}catch(e)
 	{
 		console.log(e)

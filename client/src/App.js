@@ -1,6 +1,6 @@
-import CreateOrder from "./Component/CreateOrders"
+import Router from "./routes"
 function App() {
-    return <CreateOrder/>
+    return <Router/>
   
 }
 
